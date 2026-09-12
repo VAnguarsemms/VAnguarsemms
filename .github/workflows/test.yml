@@ -1,0 +1,51 @@
+name: CI Pipeline
+on: [push, pull_request]
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11', '3.12']
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+      - name: Install dependencies
+        if: hashFiles('requirements.txt', 'pyproject.toml', 'Pipfile') != ''
+        run: |
+          if [ -f requirements.txt ]; then pip install -r requirements.txt
+          elif [ -f pyproject.toml ]; then pip install -e .
+          elif [ -f Pipfile ]; then pip install pipenv && pipenv install --dev
+          else echo "No Python dependency manifest found; skipping install."; fi
+      - name: Lint
+        if: hashFiles('requirements.txt', 'pyproject.toml', 'Pipfile') != ''
+        run: |
+          if [ -f pyproject.toml ]; then pip install ruff && ruff check .
+          elif [ -f requirements.txt ] || [ -f Pipfile ]; then pip install flake8 && flake8 .
+          else echo "No lint configuration; skipping."; fi
+      - name: Build / Type-check
+        if: hashFiles('setup.py', 'pyproject.toml') != ''
+        run: |
+          if [ -f pyproject.toml ]; then pip install build && python -m build
+          elif [ -f setup.py ]; then python setup.py build
+          else echo "No build configuration; skipping."; fi
+      - name: Test
+        if: hashFiles('tests/', 'test_*.py', '*_test.py', 'pytest.ini', 'pyproject.toml') != ''
+        run: |
+          if [ -f pytest.ini ] || grep -q 'pytest' pyproject.toml 2>/dev/null; then pip install pytest && pytest
+          elif [ -d tests ]; then python -m unittest discover -s tests
+          else python -m unittest discover
+          fi
+      - name: Summary
+        if: always()
+        run: echo "Python ${{ matrix.python-version }} job finished with status ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
